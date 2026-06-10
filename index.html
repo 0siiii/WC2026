@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>World Cup '26 · Office Pool</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.24.7/babel.min.js"></script>
+<script src="./config.js"></script>
+<style>
+  :root {
+    --pitch-900: #0a261c;
+    --pitch-800: #0e3526;
+    --pitch-700: #14452f;
+    --pitch-600: #1c5a3d;
+    --chalk: #f2f0e6;
+    --chalk-dim: rgba(242, 240, 230, 0.55);
+    --chalk-faint: rgba(242, 240, 230, 0.18);
+    --gold: #e8b84b;
+    --gold-deep: #c2932a;
+    --signal: #ff6b5e;
+    --ok: #6fd29a;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background:
+      radial-gradient(1200px 500px at 50% -150px, var(--pitch-600), transparent 70%),
+      linear-gradient(180deg, var(--pitch-800), var(--pitch-900) 60%);
+    background-attachment: fixed;
+    color: var(--chalk);
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 15px;
+    min-height: 100vh;
+  }
+  h1, h2, h3, .disp {
+    font-family: 'Oswald', sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin: 0;
+  }
+  button { font-family: inherit; cursor: pointer; }
+  a { color: var(--gold); text-decoration: none; }
+  input {
+    font-family: inherit; font-size: 16px;
+    background: rgba(0,0,0,0.25); color: var(--chalk);
+    border: 1px solid var(--chalk-faint); border-radius: 8px;
+    padding: 10px 12px; width: 100%;
+  }
+  input:focus { outline: 2px solid var(--gold); border-color: transparent; }
+
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 14px 80px; }
+  .topbar {
+    display: flex; align-items: baseline; justify-content: space-between;
+    padding: 18px 2px 10px; border-bottom: 2px solid var(--chalk-faint);
+    margin-bottom: 18px; flex-wrap: wrap; gap: 6px;
+  }
+  .wordmark { font-size: 22px; color: var(--chalk); }
+  .wordmark span { color: var(--gold); }
+  .nav { display: flex; gap: 14px; font-family: 'Oswald'; text-transform: uppercase; font-size: 13px; letter-spacing: 0.1em; }
+  .nav a { color: var(--chalk-dim); } .nav a.on { color: var(--gold); border-bottom: 2px solid var(--gold); }
+
+  .card {
+    background: rgba(0,0,0,0.22);
+    border: 1px solid var(--chalk-faint);
+    border-radius: 12px; padding: 14px; margin-bottom: 14px;
+  }
+  .eyebrow { font-family: 'Oswald'; font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--gold); margin-bottom: 8px; }
+  .muted { color: var(--chalk-dim); font-size: 13px; line-height: 1.5; }
+
+  .btn {
+    border: none; border-radius: 999px; padding: 11px 22px;
+    font-family: 'Oswald'; text-transform: uppercase; letter-spacing: 0.08em; font-size: 14px;
+    background: var(--gold); color: #221a05;
+  }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn.ghost { background: transparent; color: var(--chalk); border: 1px solid var(--chalk-dim); }
+  .btn.danger { background: var(--signal); color: #2b0c08; }
+
+  /* group cards */
+  .groups-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(245px, 1fr)); gap: 12px; }
+  .gcard { background: rgba(0,0,0,0.25); border: 1px solid var(--chalk-faint); border-radius: 12px; overflow: hidden; }
+  .gcard.done { border-color: rgba(232,184,75,0.5); }
+  .ghead { display:flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: rgba(0,0,0,0.3); border-bottom: 1px solid var(--chalk-faint); }
+  .ghead h3 { font-size: 15px; }
+  .ghead .st { font-size: 11px; color: var(--chalk-dim); font-family:'Oswald'; letter-spacing:0.1em; }
+  .trow {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    padding: 9px 12px; background: transparent; border: none; border-bottom: 1px dashed var(--chalk-faint);
+    color: var(--chalk); font-size: 14px; text-align: left;
+    transition: background 0.15s;
+  }
+  .trow:last-child { border-bottom: none; }
+  .trow:active { background: rgba(255,255,255,0.06); }
+  .trow img { width: 26px; height: 18px; object-fit: cover; border-radius: 3px; box-shadow: 0 0 0 1px rgba(0,0,0,0.4); }
+  .pos {
+    width: 24px; height: 24px; border-radius: 50%; flex: none;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Oswald'; font-size: 13px;
+    border: 1.5px dashed var(--chalk-faint); color: var(--chalk-faint);
+  }
+  .pos.p1 { background: var(--gold); border: none; color: #221a05; }
+  .pos.p2 { background: var(--chalk); border: none; color: #1c2b22; }
+  .pos.p3 { background: transparent; border: 1.5px solid var(--gold); color: var(--gold); }
+  .pos.p4 { border: 1.5px solid var(--chalk-faint); color: var(--chalk-dim); }
+  .trow.out { opacity: 0.45; }
+
+  /* thirds picker */
+  .thirds-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+  .third-chip {
+    display:flex; align-items:center; gap:10px; padding: 10px 12px;
+    background: rgba(0,0,0,0.25); border: 1.5px solid var(--chalk-faint); border-radius: 10px;
+    color: var(--chalk); font-size: 14px;
+  }
+  .third-chip img { width: 26px; height: 18px; border-radius: 3px; }
+  .third-chip.sel { border-color: var(--gold); background: rgba(232,184,75,0.12); }
+  .third-chip .gl { margin-left:auto; font-family:'Oswald'; color: var(--chalk-dim); font-size:12px; }
+
+  /* steps */
+  .steps { display:flex; gap:8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .step {
+    border: 1px solid var(--chalk-faint); background: transparent; color: var(--chalk-dim);
+    border-radius: 999px; padding: 8px 16px; font-family: 'Oswald'; text-transform: uppercase;
+    letter-spacing: 0.08em; font-size: 13px;
+  }
+  .step.on { background: var(--chalk); color: var(--pitch-900); border-color: var(--chalk); }
+  .step.ok::after { content: ' ✓'; color: inherit; }
+  .step:disabled { opacity: 0.35; }
+
+  /* bracket */
+  .bracket-scroll { overflow-x: auto; padding-bottom: 12px; }
+  .bracket { display: flex; gap: 26px; min-width: max-content; padding: 6px 2px; }
+  .round { display: flex; flex-direction: column; min-width: 188px; }
+  .round h3 { font-size: 13px; color: var(--gold); margin-bottom: 10px; letter-spacing: 0.14em; }
+  .rcol { display:flex; flex-direction: column; justify-content: space-around; flex: 1; gap: 12px; }
+  .match { position: relative; }
+  .mbox { background: rgba(0,0,0,0.3); border: 1px solid var(--chalk-faint); border-radius: 10px; overflow: hidden; }
+  .mno { position:absolute; top:-9px; left: 10px; background: var(--pitch-800); padding: 0 6px; font-family:'Oswald'; font-size: 10px; letter-spacing: 0.12em; color: var(--chalk-dim); }
+  .mteam {
+    display:flex; align-items:center; gap: 8px; width:100%;
+    padding: 8px 10px; background: transparent; border: none; color: var(--chalk);
+    font-size: 13.5px; text-align:left; border-bottom: 1px dashed var(--chalk-faint);
+    transition: background 0.15s, opacity 0.2s;
+  }
+  .mteam:last-child { border-bottom: none; }
+  .mteam img { width: 24px; height: 16px; border-radius: 2px; flex: none; }
+  .mteam .ph { width:24px; height:16px; border-radius:2px; background: var(--chalk-faint); flex:none; }
+  .mteam.win { background: rgba(232,184,75,0.16); font-weight: 600; }
+  .mteam.lose { opacity: 0.4; }
+  .mteam.hit { box-shadow: inset 3px 0 0 var(--ok); }
+  .mteam.miss { box-shadow: inset 3px 0 0 var(--signal); }
+  .mteam:disabled { cursor: default; }
+  .champ-card { text-align:center; padding: 18px 12px; border: 1.5px solid var(--gold); border-radius: 12px; background: rgba(232,184,75,0.08); }
+  .champ-card img { width: 56px; height: 38px; border-radius: 4px; margin-bottom: 8px; }
+  .champ-card .t { font-family:'Oswald'; font-size: 18px; letter-spacing: 0.08em; text-transform: uppercase; }
+
+  /* leaderboard */
+  table { width: 100%; border-collapse: collapse; }
+  th { font-family:'Oswald'; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--chalk-dim); text-align: left; padding: 8px; border-bottom: 1px solid var(--chalk-faint); }
+  td { padding: 10px 8px; border-bottom: 1px dashed var(--chalk-faint); font-size: 14px; }
+  tr.me td { background: rgba(232,184,75,0.08); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .rank1 .rk { color: var(--gold); font-weight: 700; }
+
+  .pill { display:inline-block; padding: 3px 10px; border-radius: 999px; font-family:'Oswald'; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; }
+  .pill.lock { background: var(--signal); color: #2b0c08; }
+  .pill.open { background: var(--ok); color: #0c2b1a; }
+  .pill.demo { background: var(--chalk); color: var(--pitch-900); }
+
+  .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--chalk); color: var(--pitch-900); padding: 10px 20px; border-radius: 999px; font-family: 'Oswald'; font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; z-index: 50; box-shadow: 0 6px 20px rgba(0,0,0,0.5); }
+
+  @media (max-width: 640px) {
+    body { font-size: 14px; }
+    .wordmark { font-size: 18px; }
+    .round { min-width: 168px; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo, useRef, useCallback } = React;
+
+/* ============================================================
+   TOURNAMENT DATA — verified against FIFA / final draw of
+   Dec 5, 2025 + March 2026 playoff results. Do not edit unless
+   FIFA changes something.
+   ============================================================ */
+const GROUPS = ['A','B','C','D','E','F','G','H','I','J','K','L'];
+
+const TEAMS = {
+  mx:{n:'Mexico',g:'A'}, za:{n:'South Africa',g:'A'}, kr:{n:'South Korea',g:'A'}, cz:{n:'Czechia',g:'A'},
+  ca:{n:'Canada',g:'B'}, ba:{n:'Bosnia & Herz.',g:'B'}, qa:{n:'Qatar',g:'B'}, ch:{n:'Switzerland',g:'B'},
+  br:{n:'Brazil',g:'C'}, ma:{n:'Morocco',g:'C'}, ht:{n:'Haiti',g:'C'}, 'gb-sct':{n:'Scotland',g:'C'},
+  us:{n:'United States',g:'D'}, py:{n:'Paraguay',g:'D'}, au:{n:'Australia',g:'D'}, tr:{n:'Türkiye',g:'D'},
+  de:{n:'Germany',g:'E'}, cw:{n:'Curaçao',g:'E'}, ci:{n:"Côte d'Ivoire",g:'E'}, ec:{n:'Ecuador',g:'E'},
+  nl:{n:'Netherlands',g:'F'}, jp:{n:'Japan',g:'F'}, se:{n:'Sweden',g:'F'}, tn:{n:'Tunisia',g:'F'},
+  be:{n:'Belgium',g:'G'}, eg:{n:'Egypt',g:'G'}, ir:{n:'Iran',g:'G'}, nz:{n:'New Zealand',g:'G'},
+  es:{n:'Spain',g:'H'}, cv:{n:'Cabo Verde',g:'H'}, sa:{n:'Saudi Arabia',g:'H'}, uy:{n:'Uruguay',g:'H'},
+  fr:{n:'France',g:'I'}, sn:{n:'Senegal',g:'I'}, iq:{n:'Iraq',g:'I'}, no:{n:'Norway',g:'I'},
+  ar:{n:'Argentina',g:'J'}, dz:{n:'Algeria',g:'J'}, at:{n:'Austria',g:'J'}, jo:{n:'Jordan',g:'J'},
+  pt:{n:'Portugal',g:'K'}, cd:{n:'DR Congo',g:'K'}, uz:{n:'Uzbekistan',g:'K'}, co:{n:'Colombia',g:'K'},
+  'gb-eng':{n:'England',g:'L'}, hr:{n:'Croatia',g:'L'}, gh:{n:'Ghana',g:'L'}, pa:{n:'Panama',g:'L'},
+};
+const teamsOfGroup = g => Object.keys(TEAMS).filter(id => TEAMS[id].g === g);
+const flagUrl = id => `https://flagcdn.com/w40/${id}.png`;
+
+/* Official FIFA Round-of-32 skeleton (matches 73–88).
+   W = group winner, R = runner-up, T = third place (allowed groups). */
+const R32 = [
+  { m:73, h:{R:'A'}, a:{R:'B'} },
+  { m:74, h:{W:'E'}, a:{T:['A','B','C','D','F']} },
+  { m:75, h:{W:'F'}, a:{R:'C'} },
+  { m:76, h:{W:'C'}, a:{R:'F'} },
+  { m:77, h:{W:'I'}, a:{T:['C','D','F','G','H']} },
+  { m:78, h:{R:'E'}, a:{R:'I'} },
+  { m:79, h:{W:'A'}, a:{T:['C','E','F','H','I']} },
+  { m:80, h:{W:'L'}, a:{T:['E','H','I','J','K']} },
+  { m:81, h:{W:'D'}, a:{T:['B','E','F','I','J']} },
+  { m:82, h:{W:'G'}, a:{T:['A','E','H','I','J']} },
+  { m:83, h:{R:'K'}, a:{R:'L'} },
+  { m:84, h:{W:'H'}, a:{R:'J'} },
+  { m:85, h:{W:'B'}, a:{T:['E','F','G','I','J']} },
+  { m:86, h:{W:'J'}, a:{R:'H'} },
+  { m:87, h:{W:'K'}, a:{T:['D','E','I','J','L']} },
+  { m:88, h:{R:'D'}, a:{R:'G'} },
+];
+/* Later rounds: match -> [feeder matches]. Verified vs FIFA schedule. */
+const FEED = {
+  89:[74,77], 90:[73,75], 91:[76,78], 92:[79,80],
+  93:[83,84], 94:[81,82], 95:[86,88], 96:[85,87],
+  97:[89,90], 98:[93,94], 99:[91,92], 100:[95,96],
+  101:[97,98], 102:[99,100],
+  104:[101,102],
+};
+const ROUNDS = [
+  { key:'r32', label:'Round of 32', matches: R32.map(x=>x.m) },
+  { key:'r16', label:'Round of 16', matches: [89,90,91,92,93,94,95,96] },
+  { key:'qf',  label:'Quarterfinals', matches: [97,98,99,100] },
+  { key:'sf',  label:'Semifinals', matches: [101,102] },
+  { key:'f',   label:'Final', matches: [104] },
+];
+const ALL_KO = ROUNDS.flatMap(r=>r.matches).concat([103]);
+
+/* Third-place slot allocation: deterministic backtracking over FIFA's
+   allowed-group constraints. Solvable for all 495 combinations (tested). */
+const THIRD_SLOTS = R32.filter(x=>x.a.T).map(x=>({m:x.m, allowed:x.a.T}));
+function assignThirds(letters) {
+  const out = {};
+  function solve(slots, rem) {
+    if (!slots.length) return true;
+    const sorted = [...slots].sort((a,b)=>
+      a.allowed.filter(g=>rem.includes(g)).length - b.allowed.filter(g=>rem.includes(g)).length);
+    const s = sorted[0];
+    for (const g of s.allowed.filter(g=>rem.includes(g)).sort()) {
+      out[s.m] = g;
+      if (solve(slots.filter(x=>x!==s), rem.filter(x=>x!==g))) return true;
+      delete out[s.m];
+    }
+    return false;
+  }
+  return solve(THIRD_SLOTS, [...letters]) ? out : null;
+}
+
+/* Resolve teams of every knockout match from a prediction object
+   pred = { groups:{A:[id,id,id,id],...}, thirds:[letters], ko:{"73":id,...} } */
+function bracketTeams(pred) {
+  const teams = {}; // matchNo -> [homeId|null, awayId|null]
+  const g = pred.groups || {}, thirds = pred.thirds || [], ko = pred.ko || {};
+  const complete = GROUPS.every(x => (g[x]||[]).length === 4);
+  const tmap = (complete && thirds.length === 8) ? assignThirds(thirds) : null;
+  for (const def of R32) {
+    const get = side => {
+      if (side.W) return (g[side.W]||[])[0] || null;
+      if (side.R) return (g[side.R]||[])[1] || null;
+      if (side.T) return tmap ? ((g[tmap[def.m]]||[])[2] || null) : null;
+    };
+    teams[def.m] = [get(def.h), get(def.a)];
+  }
+  for (const m of [89,90,91,92,93,94,95,96,97,98,99,100,101,102,104]) {
+    teams[m] = FEED[m].map(f => ko[f] || null);
+  }
+  // third-place playoff: losers of the semifinals
+  const loser = m => {
+    const [h,a] = teams[m] || [null,null];
+    const w = ko[m];
+    if (!w || !h || !a) return null;
+    return w === h ? a : h;
+  };
+  teams[103] = [loser(101), loser(102)];
+  return teams;
+}
+
+/* Which teams does a prediction send to each stage? Used for scoring. */
+function progression(pred) {
+  const t = bracketTeams(pred), ko = pred.ko || {};
+  const setOf = ms => new Set(ms.map(m=>ko[m]).filter(Boolean));
+  const r32 = new Set();
+  GROUPS.forEach(g => {
+    const order = (pred.groups||{})[g]||[];
+    if (order[0]) r32.add(order[0]);
+    if (order[1]) r32.add(order[1]);
+    if (order[2] && (pred.thirds||[]).includes(g)) r32.add(order[2]);
+  });
+  return {
+    r32,
+    r16: setOf(R32.map(x=>x.m)),
+    qf:  setOf([89,90,91,92,93,94,95,96]),
+    sf:  setOf([97,98,99,100]),
+    fin: setOf([101,102]),
+    champion: ko[104] || null,
+    third: ko[103] || null,
+  };
+}
+
+/* ============================================================
+   SCORING — three models. ACTIVE_MODEL controls the leaderboard.
+   A: simple progression (1 pt per correct team per stage)
+   B: weighted progression (default)
+   C: hybrid (exact group positions + per-slot knockout matches)
+   ============================================================ */
+const ACTIVE_MODEL = 'B';
+const MODELS = {
+  A: { name:'Simple', grp:{w:1,r:1,t:1}, ko:{r16:1,qf:1,sf:1,fin:1,champ:1,third:1}, slot:false },
+  B: { name:'Weighted', grp:{w:2,r:1,t:1}, ko:{r16:2,qf:4,sf:6,fin:8,champ:12,third:4}, slot:false },
+  C: { name:'Hybrid', grp:{p1:3,p2:2,p3:1}, koSlot:{r32:2,r16:3,qf:5,sf:7,f:10,tp:4}, bonusFinalists:5, slot:true },
+};
+
+function score(pred, res, modelKey) {
+  const M = MODELS[modelKey], out = { grp:0, ko:0, hitChamp:false, exactWinners:0 };
+  if (!res || !res.groups) return { ...out, total:0 };
+  const rg = res.groups || {}, pg = pred.groups || {};
+
+  for (const g of GROUPS) {
+    if (modelKey === 'A') break; // model A scores groups purely via R32 progression below
+    const r = rg[g] || [], p = pg[g] || [];
+    if (r.length < 3 || p.length < 3) continue;
+    if (M.slot) {
+      if (p[0] === r[0]) { out.grp += M.grp.p1; out.exactWinners++; }
+      if (p[1] === r[1]) out.grp += M.grp.p2;
+      if (p[2] === r[2]) out.grp += M.grp.p3;
+    } else {
+      if (p[0] === r[0]) { out.grp += M.grp.w; out.exactWinners++; }
+      if (p[1] === r[1]) out.grp += M.grp.r;
+      // correct qualifying third: same team in 3rd AND you selected that group's third to advance
+      if ((res.thirds||[]).includes(g) && (pred.thirds||[]).includes(g) && p[2] === r[2]) out.grp += M.grp.t;
+    }
+  }
+
+  if (M.slot) {
+    const rko = res.ko || {}, pko = pred.ko || {};
+    const pts = m => m >= 104 ? M.koSlot.f : m === 103 ? M.koSlot.tp :
+      m >= 101 ? M.koSlot.sf : m >= 97 ? M.koSlot.qf : m >= 89 ? M.koSlot.r16 : M.koSlot.r32;
+    for (const m of ALL_KO) if (rko[m] && pko[m] === rko[m]) out.ko += pts(m);
+    const rfin = new Set([rko[101], rko[102]].filter(Boolean));
+    const pfin = new Set([pko[101], pko[102]].filter(Boolean));
+    if (rfin.size === 2 && pfin.size === 2 && [...rfin].every(t=>pfin.has(t))) out.ko += M.bonusFinalists;
+    out.hitChamp = !!rko[104] && pko[104] === rko[104];
+  } else {
+    const P = progression(pred), R = progression(res);
+    const hits = (a,b) => [...b].filter(t=>a.has(t)).length;
+    out.ko += hits(P.r16, R.r16) * M.ko.r16;
+    out.ko += hits(P.qf,  R.qf)  * M.ko.qf;
+    out.ko += hits(P.sf,  R.sf)  * M.ko.sf;
+    out.ko += hits(P.fin, R.fin) * M.ko.fin;
+    if (R.champion && P.champion === R.champion) { out.ko += M.ko.champ; out.hitChamp = true; }
+    if (R.third && P.third === R.third) out.ko += M.ko.third;
+    if (modelKey === 'A') out.grp += hits(P.r32, R.r32) * 1;
+  }
+  out.total = out.grp + out.ko;
+  return out;
+}
+
+/* ============================================================
+   DATA LAYER — Supabase when configured, localStorage demo mode
+   when not. Same interface either way.
+   ============================================================ */
+const CFG = window.WC_CONFIG || {};
+const IS_DEMO = !CFG.SUPABASE_URL || !CFG.SUPABASE_ANON_KEY;
+const sb = IS_DEMO ? null : supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY);
+
+const demo = {
+  read(k, d) { try { return JSON.parse(localStorage.getItem('wc26_'+k)) ?? d; } catch { return d; } },
+  write(k, v) { localStorage.setItem('wc26_'+k, JSON.stringify(v)); },
+};
+
+const api = {
+  async load() {
+    if (IS_DEMO) {
+      return {
+        entries: demo.read('entries', []),
+        results: demo.read('results', {}),
+        settings: demo.read('settings', { locked:false, deadline:'2026-06-11T19:00:00Z' }),
+      };
+    }
+    const [e, r, s] = await Promise.all([
+      sb.from('entries').select('id,name,predictions,created_at,updated_at').order('created_at'),
+      sb.from('results').select('data').eq('id',1).single(),
+      sb.from('settings').select('locked,deadline').eq('id',1).single(),
+    ]);
+    if (e.error) throw e.error;
+    return { entries: e.data, results: r.data?.data || {}, settings: s.data || { locked:false } };
+  },
+  async createEntry(name) {
+    if (IS_DEMO) {
+      const id = crypto.randomUUID(), token = crypto.randomUUID();
+      const list = demo.read('entries', []);
+      list.push({ id, name, predictions:{}, created_at:new Date().toISOString(), updated_at:new Date().toISOString() });
+      demo.write('entries', list);
+      return { entry_id:id, entry_token:token };
+    }
+    const { data, error } = await sb.rpc('create_entry', { p_name: name });
+    if (error) throw error;
+    return Array.isArray(data) ? data[0] : data;
+  },
+  async saveEntry(id, token, predictions) {
+    if (IS_DEMO) {
+      const list = demo.read('entries', []);
+      const e = list.find(x=>x.id===id);
+      if (e) { e.predictions = predictions; e.updated_at = new Date().toISOString(); demo.write('entries', list); }
+      return;
+    }
+    const { error } = await sb.rpc('save_entry', { p_id:id, p_token:token, p_predictions:predictions });
+    if (error) throw error;
+  },
+  async checkPin(pin) {
+    if (IS_DEMO) return pin === 'demo';
+    const { data, error } = await sb.rpc('check_pin', { p_pin: pin });
+    if (error) throw error;
+    return !!data;
+  },
+  async saveResults(pin, data) {
+    if (IS_DEMO) { demo.write('results', data); return; }
+    const { error } = await sb.rpc('admin_save_results', { p_pin:pin, p_data:data });
+    if (error) throw error;
+  },
+  async setLock(pin, locked) {
+    if (IS_DEMO) { const s = demo.read('settings',{}); s.locked = locked; demo.write('settings', s); return; }
+    const { error } = await sb.rpc('admin_set_lock', { p_pin:pin, p_locked:locked });
+    if (error) throw error;
+  },
+  async deleteEntry(pin, id) {
+    if (IS_DEMO) { demo.write('entries', demo.read('entries',[]).filter(x=>x.id!==id)); return; }
+    const { error } = await sb.rpc('admin_delete_entry', { p_pin:pin, p_id:id });
+    if (error) throw error;
+  },
+};
+
+const myTokens = {
+  get() { return demo.read('tokens', {}); },
+  set(id, token) { const t = this.get(); t[id] = token; demo.write('tokens', t); },
+};
+
+/* ============================================================
+   SMALL UI PIECES
+   ============================================================ */
+function Flag({ id }) {
+  return id
+    ? <img src={flagUrl(id)} alt="" loading="lazy" />
+    : <span className="ph" />;
+}
+function useHash() {
+  const [h, setH] = useState(window.location.hash);
+  useEffect(() => {
+    const f = () => setH(window.location.hash);
+    window.addEventListener('hashchange', f);
+    return () => window.removeEventListener('hashchange', f);
+  }, []);
+  return h;
+}
+function Toast({ msg }) { return msg ? <div className="toast">{msg}</div> : null; }
+
+/* Group card: tap teams in finishing order 1st -> 4th.
+   Tapping a ranked team clears it and everything below it. */
+function GroupCard({ g, order, onChange, readOnly, actual }) {
+  const ids = teamsOfGroup(g);
+  const rankOf = id => order.indexOf(id);
+  const tap = id => {
+    if (readOnly) return;
+    const r = rankOf(id);
+    if (r >= 0) onChange(order.slice(0, r));
+    else if (order.length < 4) onChange([...order, id]);
+  };
+  const done = order.length === 4;
+  return (
+    <div className={'gcard' + (done ? ' done' : '')}>
+      <div className="ghead">
+        <h3>Group {g}</h3>
+        <span className="st">{done ? 'set' : `pick ${['1st','2nd','3rd','4th'][order.length]}`}</span>
+      </div>
+      {ids.map(id => {
+        const r = rankOf(id);
+        const actualR = actual ? actual.indexOf(id) : -1;
+        return (
+          <button key={id} className={'trow' + (done && r > 1 ? ' out' : '')} onClick={() => tap(id)} disabled={readOnly}>
+            <span className={'pos' + (r >= 0 ? ' p' + (r+1) : '')}>{r >= 0 ? r+1 : ''}</span>
+            <Flag id={id} />
+            <span>{TEAMS[id].n}</span>
+            {actual && actualR >= 0 && <span style={{marginLeft:'auto', fontSize:11, color: actualR === r ? 'var(--ok)' : 'var(--signal)'}}>real: {actualR+1}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* Pick exactly 8 of the 12 predicted third-placed teams. */
+function ThirdsPicker({ pred, onChange, readOnly }) {
+  const sel = pred.thirds || [];
+  const toggle = g => {
+    if (readOnly) return;
+    if (sel.includes(g)) onChange(sel.filter(x=>x!==g));
+    else if (sel.length < 8) onChange([...sel, g]);
+  };
+  return (
+    <div>
+      <p className="muted">FIFA sends the 8 best third-placed teams to the Round of 32. Pick which 8 of your predicted thirds make it. Selected: <b style={{color:'var(--chalk)'}}>{sel.length}/8</b></p>
+      <div className="thirds-grid">
+        {GROUPS.map(g => {
+          const id = (pred.groups?.[g]||[])[2];
+          if (!id) return null;
+          return (
+            <button key={g} className={'third-chip' + (sel.includes(g) ? ' sel' : '')} onClick={()=>toggle(g)} disabled={readOnly}>
+              <Flag id={id} /><span>{TEAMS[id].n}</span><span className="gl">3{g}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* Knockout bracket. Tap a team to send it through; downstream picks
+   of a replaced team are cleared automatically. */
+function Bracket({ pred, onPick, readOnly, actual }) {
+  const teams = useMemo(() => bracketTeams(pred), [pred]);
+  const ko = pred.ko || {};
+  const actualTeams = useMemo(() => actual ? bracketTeams(actual) : null, [actual]);
+
+  const pick = (m, id) => {
+    if (readOnly || !id) return;
+    const next = { ...ko };
+    const prev = next[m];
+    next[m] = id;
+    if (prev && prev !== id) {
+      // walk forward and clear the replaced team
+      for (const later of ALL_KO) {
+        if (later <= m) continue;
+        if (next[later] === prev) delete next[later];
+      }
+      if (next[103] === prev) delete next[103];
+    }
+    onPick(next);
+  };
+
+  const MatchBox = ({ m, label }) => {
+    const [h, a] = teams[m] || [null, null];
+    const w = ko[m];
+    const realW = actual?.ko?.[m];
+    return (
+      <div className="match">
+        <span className="mno">{label || 'M'+m}</span>
+        <div className="mbox">
+          {[h, a].map((id, i) => {
+            let cls = 'mteam';
+            if (w && id) cls += w === id ? ' win' : ' lose';
+            if (realW && id && w === id) cls += realW === id ? ' hit' : ' miss';
+            return (
+              <button key={i} className={cls} onClick={()=>pick(m, id)} disabled={readOnly || !id}>
+                <Flag id={id} />
+                <span>{id ? TEAMS[id].n : '—'}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  const champ = ko[104];
+  return (
+    <div className="bracket-scroll">
+      <div className="bracket">
+        {ROUNDS.map(r => (
+          <div className="round" key={r.key}>
+            <h3>{r.label}</h3>
+            <div className="rcol">{r.matches.map(m => <MatchBox key={m} m={m} />)}</div>
+          </div>
+        ))}
+        <div className="round">
+          <h3>Champion</h3>
+          <div className="rcol">
+            <div className="champ-card">
+              {champ ? <><Flag id={champ} /><div className="t">{TEAMS[champ].n}</div></> : <div className="muted">Pick the final</div>}
+            </div>
+            <MatchBox m={103} label="3rd place" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   PAGES
+   ============================================================ */
+function PredictionEditor({ entry, token, locked, onSaved, results }) {
+  const [pred, setPred] = useState(entry.predictions || {});
+  const [tab, setTab] = useState('groups');
+  const [toast, setToast] = useState('');
+  const saveTimer = useRef(null);
+  const readOnly = locked || !token;
+
+  const groupsDone = GROUPS.every(g => (pred.groups?.[g]||[]).length === 4);
+  const thirdsDone = (pred.thirds||[]).length === 8;
+  const champDone = !!(pred.ko||{})[104];
+
+  const update = next => {
+    setPred(next);
+    if (readOnly) return;
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(async () => {
+      try { await api.saveEntry(entry.id, token, next); setToast('Saved'); onSaved(entry.id, next); }
+      catch (e) { setToast('Save failed: ' + e.message); }
+      setTimeout(()=>setToast(''), 1800);
+    }, 600);
+  };
+
+  const setGroup = (g, order) => {
+    const groups = { ...(pred.groups||{}), [g]: order };
+    // group change invalidates thirds selection for that group + bracket picks of removed teams
+    let thirds = (pred.thirds||[]).filter(x => x !== g || order.length === 4);
+    update({ ...pred, groups, thirds, ko: pruneKo(pred, groups, thirds) });
+  };
+  const setThirds = thirds => update({ ...pred, thirds, ko: pruneKo(pred, pred.groups||{}, thirds) });
+  const setKo = ko => update({ ...pred, ko });
+
+  function pruneKo(p, groups, thirds) {
+    const probe = bracketTeams({ groups, thirds, ko: p.ko||{} });
+    const ko = { ...(p.ko||{}) };
+    for (const m of ALL_KO) {
+      const [h,a] = probe[m]||[null,null];
+      if (ko[m] && ko[m] !== h && ko[m] !== a) delete ko[m];
+    }
+    return ko;
+  }
+
+  return (
+    <div>
+      <div className="topbar" style={{borderBottom:'none', padding:'0 0 4px'}}>
+        <h2 className="disp" style={{fontSize:20}}>{entry.name}'s bracket</h2>
+        {readOnly && <span className="pill lock">{locked ? 'Locked' : 'View only'}</span>}
+      </div>
+      <div className="steps">
+        <button className={'step' + (tab==='groups'?' on':'') + (groupsDone?' ok':'')} onClick={()=>setTab('groups')}>1 · Groups</button>
+        <button className={'step' + (tab==='thirds'?' on':'') + (thirdsDone?' ok':'')} onClick={()=>setTab('thirds')} disabled={!groupsDone}>2 · Best thirds</button>
+        <button className={'step' + (tab==='ko'?' on':'') + (champDone?' ok':'')} onClick={()=>setTab('ko')} disabled={!groupsDone || !thirdsDone}>3 · Knockout</button>
+      </div>
+
+      {tab === 'groups' && (
+        <div>
+          <p className="muted">Tap teams in finishing order: 1st, 2nd, 3rd, 4th. Tap a ranked team to undo from there.</p>
+          <div className="groups-grid">
+            {GROUPS.map(g => (
+              <GroupCard key={g} g={g} order={pred.groups?.[g]||[]} onChange={o=>setGroup(g,o)} readOnly={readOnly} actual={results?.groups?.[g]} />
+            ))}
+          </div>
+          {groupsDone && !readOnly && <p style={{marginTop:14}}><button className="btn" onClick={()=>setTab('thirds')}>Next: pick best thirds →</button></p>}
+        </div>
+      )}
+      {tab === 'thirds' && (
+        <div>
+          <ThirdsPicker pred={pred} onChange={setThirds} readOnly={readOnly} />
+          {thirdsDone && !readOnly && <p style={{marginTop:14}}><button className="btn" onClick={()=>setTab('ko')}>Next: knockout bracket →</button></p>}
+        </div>
+      )}
+      {tab === 'ko' && (
+        <div>
+          <p className="muted">Tap a team in each match to send it through. The next round fills in automatically, all the way to the final. Third-place slots follow FIFA's official allocation rules.</p>
+          <Bracket pred={pred} onPick={setKo} readOnly={readOnly} actual={results?.ko ? results : null} />
+        </div>
+      )}
+      <Toast msg={toast} />
+    </div>
+  );
+}
+
+function Home({ state, reload }) {
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const tokens = myTokens.get();
+  const locked = state.settings.locked || new Date() > new Date(state.settings.deadline);
+
+  const create = async () => {
+    if (!name.trim()) return;
+    setBusy(true);
+    try {
+      const r = await api.createEntry(name.trim());
+      myTokens.set(r.entry_id, r.entry_token);
+      await reload();
+      window.location.hash = '#/edit/' + r.entry_id;
+    } catch (e) { alert(e.message); }
+    setBusy(false);
+  };
+
+  const completion = e => {
+    const p = e.predictions || {};
+    const g = GROUPS.filter(x => (p.groups?.[x]||[]).length === 4).length;
+    const ko = Object.keys(p.ko||{}).length;
+    if (p.ko?.[104]) return 'Complete';
+    return `${g}/12 groups · ${ko}/32 picks`;
+  };
+
+  return (
+    <div>
+      <div className="card">
+        <div className="eyebrow">Join the pool</div>
+        {locked
+          ? <p className="muted">Predictions are locked. The tournament is underway — check the <a href="#/leaderboard">leaderboard</a>.</p>
+          : <div style={{display:'flex', gap:10, flexWrap:'wrap'}}>
+              <input placeholder="Your name" value={name} onChange={e=>setName(e.target.value)} style={{flex:'1 1 200px'}} maxLength={40} />
+              <button className="btn" onClick={create} disabled={busy || !name.trim()}>Create my bracket</button>
+            </div>}
+        <p className="muted" style={{marginTop:10}}>
+          Lock: {new Date(state.settings.deadline).toLocaleString()} {state.settings.locked && '(locked early by admin)'}
+        </p>
+      </div>
+
+      <div className="card">
+        <div className="eyebrow">Brackets ({state.entries.length})</div>
+        {state.entries.length === 0 && <p className="muted">No brackets yet. Be the first.</p>}
+        {state.entries.map(e => (
+          <div key={e.id} style={{display:'flex', alignItems:'center', gap:10, padding:'8px 0', borderBottom:'1px dashed var(--chalk-faint)'}}>
+            <strong style={{flex:1}}>{e.name}</strong>
+            <span className="muted">{completion(e)}</span>
+            {tokens[e.id] && !locked
+              ? <a href={'#/edit/'+e.id} className="btn ghost" style={{padding:'6px 14px', fontSize:12}}>Edit</a>
+              : <a href={'#/view/'+e.id} className="btn ghost" style={{padding:'6px 14px', fontSize:12}}>View</a>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Leaderboard({ state }) {
+  const tokens = myTokens.get();
+  const rows = state.entries.map(e => {
+    const s = score(e.predictions||{}, state.results, ACTIVE_MODEL);
+    return { ...e, s };
+  }).sort((a,b) =>
+    b.s.total - a.s.total ||
+    (b.s.hitChamp?1:0) - (a.s.hitChamp?1:0) ||
+    b.s.exactWinners - a.s.exactWinners ||
+    new Date(a.created_at) - new Date(b.created_at));
+  const hasResults = state.results && Object.keys(state.results.groups||{}).length > 0;
+  return (
+    <div className="card">
+      <div className="eyebrow">Leaderboard · model {ACTIVE_MODEL} ({MODELS[ACTIVE_MODEL].name})</div>
+      {!hasResults && <p className="muted">Scores appear once real results are entered. Tiebreakers: correct champion, then exact group winners, then earliest entry.</p>}
+      <table>
+        <thead><tr><th>#</th><th>Name</th><th>Champion pick</th><th className="num">Groups</th><th className="num">Knockout</th><th className="num">Total</th></tr></thead>
+        <tbody>
+          {rows.map((r, i) => {
+            const champ = (r.predictions?.ko||{})[104];
+            return (
+              <tr key={r.id} className={(tokens[r.id] ? 'me ' : '') + (i===0 && hasResults ? 'rank1' : '')}>
+                <td className="rk">{i+1}</td>
+                <td><a href={'#/view/'+r.id} style={{color:'var(--chalk)'}}>{r.name}</a></td>
+                <td>{champ ? <span style={{display:'inline-flex',alignItems:'center',gap:6}}><img src={flagUrl(champ)} style={{width:22,height:15,borderRadius:2}} alt=""/> {TEAMS[champ].n}</span> : <span className="muted">—</span>}</td>
+                <td className="num">{r.s.grp}</td>
+                <td className="num">{r.s.ko}</td>
+                <td className="num"><b>{r.s.total}</b></td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function Admin({ state, reload }) {
+  const [pin, setPin] = useState(sessionStorage.getItem('wc26_pin') || '');
+  const [authed, setAuthed] = useState(false);
+  const [res, setRes] = useState(state.results || {});
+  const [toast, setToast] = useState('');
+
+  useEffect(() => { setRes(state.results || {}); }, [state.results]);
+  useEffect(() => { if (pin && !authed) login(); }, []);
+
+  const login = async () => {
+    try {
+      if (await api.checkPin(pin)) { setAuthed(true); sessionStorage.setItem('wc26_pin', pin); }
+      else alert('Wrong PIN');
+    } catch (e) { alert(e.message); }
+  };
+
+  const save = async next => {
+    setRes(next);
+    try { await api.saveResults(pin, next); setToast('Results saved'); reload(); }
+    catch (e) { setToast('Failed: ' + e.message); }
+    setTimeout(()=>setToast(''), 1800);
+  };
+
+  if (!authed) return (
+    <div className="card" style={{maxWidth:380}}>
+      <div className="eyebrow">Admin access</div>
+      <input type="password" placeholder={IS_DEMO ? 'PIN (demo mode: "demo")' : 'Admin PIN'} value={pin} onChange={e=>setPin(e.target.value)} onKeyDown={e=>e.key==='Enter'&&login()} />
+      <p style={{marginTop:10}}><button className="btn" onClick={login}>Enter</button></p>
+    </div>
+  );
+
+  const locked = state.settings.locked;
+  return (
+    <div>
+      <div className="card" style={{display:'flex', gap:12, alignItems:'center', flexWrap:'wrap'}}>
+        <span className={'pill ' + (locked ? 'lock' : 'open')}>{locked ? 'Predictions locked' : 'Predictions open'}</span>
+        <button className="btn ghost" onClick={async ()=>{ await api.setLock(pin, !locked); reload(); }}>
+          {locked ? 'Unlock predictions' : 'Lock predictions now'}
+        </button>
+        <span className="muted">Auto-lock at deadline either way.</span>
+      </div>
+
+      <div className="card">
+        <div className="eyebrow">Real results · groups</div>
+        <p className="muted">Enter the final group standings as they finish. Partial entry is fine; the leaderboard scores whatever exists.</p>
+        <div className="groups-grid">
+          {GROUPS.map(g => (
+            <GroupCard key={g} g={g} order={res.groups?.[g]||[]} onChange={o=>save({ ...res, groups:{...(res.groups||{}), [g]:o} })} />
+          ))}
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="eyebrow">Real results · qualified thirds</div>
+        <ThirdsPicker pred={res} onChange={t=>save({ ...res, thirds:t })} />
+      </div>
+
+      <div className="card">
+        <div className="eyebrow">Real results · knockout</div>
+        <p className="muted">Tap the actual winner of each match as it's played.</p>
+        <Bracket pred={res} onPick={ko=>save({ ...res, ko })} />
+      </div>
+
+      <div className="card">
+        <div className="eyebrow">Manage brackets</div>
+        {state.entries.map(e => (
+          <div key={e.id} style={{display:'flex', gap:10, alignItems:'center', padding:'6px 0', borderBottom:'1px dashed var(--chalk-faint)'}}>
+            <span style={{flex:1}}>{e.name}</span>
+            <a className="btn ghost" style={{padding:'5px 12px', fontSize:12}} href={'#/view/'+e.id}>View</a>
+            <button className="btn danger" style={{padding:'5px 12px', fontSize:12}} onClick={async ()=>{ if(confirm('Delete '+e.name+'?')) { await api.deleteEntry(pin, e.id); reload(); } }}>Delete</button>
+          </div>
+        ))}
+      </div>
+      <Toast msg={toast} />
+    </div>
+  );
+}
+
+/* ============================================================
+   APP SHELL
+   ============================================================ */
+function App() {
+  const [state, setState] = useState(null);
+  const [err, setErr] = useState(null);
+  const hash = useHash();
+
+  const reload = useCallback(async () => {
+    try { setState(await api.load()); }
+    catch (e) { setErr(e.message); }
+  }, []);
+  useEffect(() => { reload(); }, [reload]);
+
+  if (err) return <div className="wrap"><div className="card"><b>Could not load data.</b><p className="muted">{err}. Check config.js and that schema.sql ran successfully.</p></div></div>;
+  if (!state) return <div className="wrap"><p className="muted" style={{padding:40, textAlign:'center'}}>Warming up…</p></div>;
+
+  const locked = state.settings.locked || new Date() > new Date(state.settings.deadline);
+  const onSaved = (id, predictions) => {
+    setState(s => ({ ...s, entries: s.entries.map(e => e.id === id ? { ...e, predictions } : e) }));
+  };
+
+  let page;
+  const m = hash.match(/^#\/(edit|view)\/(.+)$/);
+  if (m) {
+    const entry = state.entries.find(e => e.id === m[2]);
+    const token = m[1] === 'edit' ? myTokens.get()[m[2]] : null;
+    page = entry
+      ? <PredictionEditor key={entry.id + m[1]} entry={entry} token={token} locked={locked || m[1]==='view'} onSaved={onSaved} results={state.results} />
+      : <div className="card">Bracket not found. <a href="#">Back home</a></div>;
+  } else if (hash === '#/leaderboard') page = <Leaderboard state={state} />;
+  else if (hash === '#/admin') page = <Admin state={state} reload={reload} />;
+  else page = <Home state={state} reload={reload} />;
+
+  return (
+    <div className="wrap">
+      <div className="topbar">
+        <a href="#"><h1 className="wordmark">World Cup <span>'26</span> · Office Pool</h1></a>
+        <nav className="nav">
+          <a href="#" className={!hash || hash==='#' ? 'on':''}>Brackets</a>
+          <a href="#/leaderboard" className={hash==='#/leaderboard'?'on':''}>Leaderboard</a>
+          <a href="#/admin" className={hash==='#/admin'?'on':''}>Admin</a>
+          {IS_DEMO && <span className="pill demo">Demo mode</span>}
+        </nav>
+      </div>
+      {page}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
