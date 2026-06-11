@@ -179,6 +179,39 @@
     .round { min-width: 168px; }
   }
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+  /* penalty game */
+  .pitchwrap { max-width: 460px; margin: 0 auto; }
+  .goalarea {
+    position: relative; width: 100%; aspect-ratio: 460/300;
+    background: linear-gradient(180deg, #1c5a3d 0%, #14452f 60%, #0e3526 100%);
+    border-radius: 12px; overflow: hidden; user-select: none; touch-action: manipulation;
+  }
+  .goalmouth {
+    position: absolute; left: 8%; right: 8%; top: 12%; height: 52%;
+    border: 4px solid var(--chalk); border-bottom: none; border-radius: 4px 4px 0 0;
+    background:
+      repeating-linear-gradient(0deg, transparent, transparent 11px, rgba(242,240,230,0.13) 11px, rgba(242,240,230,0.13) 12px),
+      repeating-linear-gradient(90deg, transparent, transparent 11px, rgba(242,240,230,0.13) 11px, rgba(242,240,230,0.13) 12px);
+    cursor: crosshair;
+  }
+  .aimdot { position: absolute; width: 22px; height: 22px; border: 2.5px solid var(--gold); border-radius: 50%; transform: translate(-50%,-50%); pointer-events: none; box-shadow: 0 0 8px rgba(232,184,75,0.7); }
+  .keeper { position: absolute; font-size: 42px; transition: all 0.45s cubic-bezier(.34,1.3,.64,1); transform: translate(-50%,-50%); z-index: 2; }
+  .gameball { position: absolute; font-size: 30px; left: 50%; bottom: 4%; transform: translate(-50%, 0); transition: all 0.55s cubic-bezier(.2,.8,.4,1); z-index: 3; }
+  .verdict {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-family: 'Oswald'; font-size: 42px; letter-spacing: 0.1em; text-transform: uppercase;
+    text-shadow: 0 3px 14px rgba(0,0,0,0.7); z-index: 5; pointer-events: none;
+  }
+  .powerbar { position: relative; height: 26px; border-radius: 999px; margin-top: 12px; overflow: hidden;
+    background: linear-gradient(90deg, var(--signal) 0%, var(--signal) 22%, var(--gold) 22%, var(--gold) 38%, var(--ok) 38%, var(--ok) 62%, var(--gold) 62%, var(--gold) 78%, var(--signal) 78%);
+    border: 1px solid var(--chalk-faint);
+  }
+  .powermark { position: absolute; top: -2px; bottom: -2px; width: 5px; background: var(--chalk); border-radius: 3px; box-shadow: 0 0 6px rgba(0,0,0,0.6); }
+  .shotdots { display: flex; gap: 8px; justify-content: center; margin: 10px 0; }
+  .sdot { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--chalk-faint); }
+  .sdot.goal { background: var(--ok); border-color: var(--ok); }
+  .sdot.nogoal { background: var(--signal); border-color: var(--signal); }
 </style>
 </head>
 <body>
@@ -448,6 +481,22 @@ const api = {
   async deleteEntry(pin, id) {
     if (IS_DEMO) { demo.write('entries', demo.read('entries',[]).filter(x=>x.id!==id)); return; }
     const { error } = await sb.rpc('admin_delete_entry', { p_pin:pin, p_id:id });
+    if (error) throw error;
+  },
+  async loadGameScores() {
+    if (IS_DEMO) return demo.read('game_scores', []);
+    const { data, error } = await sb.from('game_scores').select('name,team,score,goals,created_at').order('score', { ascending:false }).limit(200);
+    if (error) { console.warn('Game scores unavailable:', error.message); return null; }
+    return data;
+  },
+  async submitGameScore(name, team, scoreVal, goals) {
+    if (IS_DEMO) {
+      const list = demo.read('game_scores', []);
+      list.push({ name, team, score:scoreVal, goals, created_at:new Date().toISOString() });
+      demo.write('game_scores', list);
+      return;
+    }
+    const { error } = await sb.rpc('submit_game_score', { p_name:name, p_team:team, p_score:scoreVal, p_goals:goals });
     if (error) throw error;
   },
 };
@@ -934,6 +983,224 @@ function Admin({ state, reload }) {
   );
 }
 
+
+/* ============================================================
+   PENALTY SHOOTOUT MINI-GAME — fully separate from predictions.
+   Own table (game_scores), own leaderboard. 5 shots vs AI keeper:
+   tap to aim, stop the power bar near the center for accuracy.
+   ============================================================ */
+const KEEPER_ZONES = [
+  { x: 0.16, y: 0.55 }, { x: 0.5, y: 0.6 }, { x: 0.84, y: 0.55 },
+  { x: 0.16, y: 0.25 }, { x: 0.84, y: 0.25 },
+];
+
+function PenaltyGame() {
+  const [phase, setPhase] = useState('pick'); // pick | aim | power | anim | done
+  const [name, setName] = useState(localStorage.getItem('wc26_game_name') || '');
+  const [team, setTeam] = useState(localStorage.getItem('wc26_game_team') || '');
+  const [shot, setShot] = useState(0);
+  const [shots, setShots] = useState([]); // {goal:bool, pts:int}
+  const [aim, setAim] = useState(null); // {x,y} fractions inside goal mouth
+  const [keeper, setKeeper] = useState({ x: 0.5, y: 0.62 });
+  const [ballPos, setBallPos] = useState(null);
+  const [verdict, setVerdict] = useState(null);
+  const [scores, setScores] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const barPos = useRef(0.0);
+  const barDir = useRef(1);
+  const rafRef = useRef(null);
+  const barElRef = useRef(null);
+  const goalRef = useRef(null);
+
+  useEffect(() => { api.loadGameScores().then(setScores); }, []);
+  useEffect(() => () => cancelAnimationFrame(rafRef.current), []);
+
+  const totalScore = shots.reduce((a, s) => a + s.pts, 0);
+  const totalGoals = shots.filter(s => s.goal).length;
+
+  const startGame = () => {
+    if (!name.trim() || !team) return;
+    localStorage.setItem('wc26_game_name', name.trim());
+    localStorage.setItem('wc26_game_team', team);
+    setShots([]); setShot(0); setAim(null); setVerdict(null); setBallPos(null);
+    setKeeper({ x: 0.5, y: 0.62 });
+    setPhase('aim');
+  };
+
+  const placeAim = e => {
+    if (phase !== 'aim') return;
+    const r = e.currentTarget.getBoundingClientRect();
+    const x = Math.min(0.97, Math.max(0.03, (e.clientX - r.left) / r.width));
+    const y = Math.min(0.95, Math.max(0.05, (e.clientY - r.top) / r.height));
+    setAim({ x, y });
+    // start the power bar
+    barPos.current = 0; barDir.current = 1;
+    setPhase('power');
+    const speed = 0.013 + shot * 0.0035; // keeper pressure: bar speeds up each round
+    const tick = () => {
+      barPos.current += barDir.current * speed;
+      if (barPos.current >= 1) { barPos.current = 1; barDir.current = -1; }
+      if (barPos.current <= 0) { barPos.current = 0; barDir.current = 1; }
+      if (barElRef.current) barElRef.current.style.left = (barPos.current * 100) + '%';
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+  };
+
+  const shoot = () => {
+    if (phase !== 'power' || !aim) return;
+    cancelAnimationFrame(rafRef.current);
+    const q = 1 - Math.abs(barPos.current - 0.5) * 2; // 1 = perfect center
+    // poor timing can drag the ball off target
+    let { x, y } = aim;
+    let missed = false;
+    if (q < 0.25) {
+      const drift = (0.3 - q) * (Math.random() > 0.5 ? 1 : -1);
+      x += drift; y -= (0.25 - q) * 0.8 * Math.random(); // skied or dragged wide
+      if (x < 0.02 || x > 0.98 || y < 0.02) missed = true;
+    }
+    // keeper AI: corners slightly favoured, smarter in later rounds
+    const guess = KEEPER_ZONES[Math.random() < 0.25 + shot * 0.04
+      ? (x < 0.5 ? (y < 0.45 ? 3 : 0) : (y < 0.45 ? 4 : 2)) // reads your aim
+      : Math.floor(Math.random() * KEEPER_ZONES.length)];
+    setKeeper(guess);
+    setBallPos({ x: Math.min(0.98, Math.max(0.02, x)), y: Math.min(0.98, Math.max(0.02, y)) });
+    setPhase('anim');
+
+    let goal = false;
+    if (!missed) {
+      const dx = Math.abs(guess.x - x), dy = Math.abs(guess.y - (1 - y));
+      const reach = Math.sqrt(dx * dx + dy * dy * 0.6);
+      const saveProb = reach < 0.16 ? 0.92 - 0.35 * q : reach < 0.3 ? 0.55 - 0.4 * q : reach < 0.42 ? 0.18 * (1 - q) : 0;
+      goal = Math.random() > saveProb;
+    }
+    const pts = goal ? 100 + Math.round(q * 60) : 0;
+
+    setTimeout(() => {
+      setVerdict(missed ? 'WIDE!' : goal ? 'GOAL!' : 'SAVED!');
+      const newShots = [...shots, { goal, pts }];
+      setShots(newShots);
+      setTimeout(() => {
+        setVerdict(null); setAim(null); setBallPos(null);
+        setKeeper({ x: 0.5, y: 0.62 });
+        if (newShots.length >= 5) setPhase('done');
+        else { setShot(newShots.length); setPhase('aim'); }
+      }, 1100);
+    }, 600);
+  };
+
+  const submit = async () => {
+    setSaving(true);
+    try {
+      await api.submitGameScore(name.trim(), team, totalScore, totalGoals);
+      const fresh = await api.loadGameScores();
+      setScores(fresh);
+    } catch (e) { alert('Could not save score: ' + e.message); }
+    setSaving(false);
+    setPhase('pick');
+  };
+
+  // best score per player for the board
+  const board = useMemo(() => {
+    if (!scores) return [];
+    const best = {};
+    for (const s of scores) {
+      const k = s.name.toLowerCase();
+      if (!best[k] || s.score > best[k].score) best[k] = s;
+    }
+    return Object.values(best).sort((a, b) => b.score - a.score).slice(0, 30);
+  }, [scores]);
+
+  const gameUnavailable = !IS_DEMO && scores === null;
+
+  return (
+    <div>
+      <div className="card pitchwrap">
+        <div className="eyebrow">Penalty Shootout</div>
+        {phase === 'pick' && (
+          <div>
+            <p className="muted">5 penalties against the keeper. Tap the goal to aim, then stop the power bar as close to the middle as you can. Goals + timing = points. Best score counts.</p>
+            <input placeholder="Your name" value={name} onChange={e => setName(e.target.value)} maxLength={40} style={{ marginBottom: 10 }} />
+            <div className="thirds-grid" style={{ maxHeight: 220, overflowY: 'auto', marginBottom: 12 }}>
+              {Object.keys(TEAMS).map(id => (
+                <button key={id} className={'third-chip' + (team === id ? ' sel' : '')} onClick={() => setTeam(id)}>
+                  <Flag id={id} /><span>{TEAMS[id].n}</span>
+                </button>
+              ))}
+            </div>
+            <button className="btn" onClick={startGame} disabled={!name.trim() || !team}>Kick off ⚽</button>
+          </div>
+        )}
+
+        {phase !== 'pick' && (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Flag id={team} /> <b>{name}</b></span>
+              <span className="disp" style={{ color: 'var(--gold)' }}>{totalScore} pts</span>
+            </div>
+            <div className="shotdots">
+              {[0, 1, 2, 3, 4].map(i => (
+                <span key={i} className={'sdot' + (shots[i] ? (shots[i].goal ? ' goal' : ' nogoal') : '')} />
+              ))}
+            </div>
+            <div className="goalarea">
+              <div className="goalmouth" ref={goalRef} onClick={placeAim}>
+                {aim && <span className="aimdot" style={{ left: (aim.x * 100) + '%', top: (aim.y * 100) + '%' }} />}
+              </div>
+              <span className="keeper" style={{ left: (8 + keeper.x * 84) + '%', top: (12 + (1 - keeper.y) * 52 * 0.9) + '%' }}>🧤</span>
+              <span className="gameball" style={ballPos
+                ? { left: (8 + ballPos.x * 84) + '%', bottom: (88 - (12 + ballPos.y * 52)) + '%', transform: 'translate(-50%,0) scale(0.55)' }
+                : {}}>⚽</span>
+              {verdict && <div className="verdict" style={{ color: verdict === 'GOAL!' ? 'var(--ok)' : 'var(--signal)' }}>{verdict}</div>}
+            </div>
+
+            {phase === 'aim' && <p className="muted" style={{ textAlign: 'center', marginTop: 10 }}>Shot {shot + 1} of 5 — tap inside the goal to aim</p>}
+            {phase === 'power' && (
+              <div>
+                <div className="powerbar"><div className="powermark" ref={barElRef} /></div>
+                <p style={{ textAlign: 'center', marginTop: 10 }}><button className="btn" onClick={shoot}>SHOOT!</button></p>
+              </div>
+            )}
+            {phase === 'done' && (
+              <div style={{ textAlign: 'center', marginTop: 12 }}>
+                <h2 className="disp" style={{ fontSize: 22, color: 'var(--gold)' }}>{totalGoals}/5 scored · {totalScore} pts</h2>
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 12, flexWrap: 'wrap' }}>
+                  <button className="btn" onClick={submit} disabled={saving || gameUnavailable}>{saving ? 'Saving…' : 'Save score'}</button>
+                  <button className="btn ghost" onClick={startGame}>Play again</button>
+                </div>
+                {gameUnavailable && <p className="muted" style={{ marginTop: 8 }}>Scoreboard offline — run game.sql in Supabase to enable saving.</p>}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="eyebrow">Shootout leaderboard</div>
+        {gameUnavailable && <p className="muted">Not available yet. The admin needs to run game.sql in Supabase first. The game itself works fine.</p>}
+        {!gameUnavailable && board.length === 0 && <p className="muted">No scores yet. Set the bar.</p>}
+        {board.length > 0 && (
+          <table>
+            <thead><tr><th>#</th><th>Player</th><th>Team</th><th className="num">Goals</th><th className="num">Score</th></tr></thead>
+            <tbody>
+              {board.map((s, i) => (
+                <tr key={s.name + i} className={i === 0 ? 'rank1' : ''}>
+                  <td className="rk">{i + 1}</td>
+                  <td>{s.name}</td>
+                  <td><span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><img src={flagUrl(s.team)} style={{ width: 22, height: 15, borderRadius: 2 }} alt="" /> {TEAMS[s.team]?.n || s.team}</span></td>
+                  <td className="num">{s.goals}/5</td>
+                  <td className="num"><b>{s.score}</b></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <p className="muted" style={{ marginTop: 10 }}>Separate from the predictions leaderboard. This one is pure bragging rights.</p>
+      </div>
+    </div>
+  );
+}
+
 /* ============================================================
    APP SHELL
    ============================================================ */
@@ -965,6 +1232,7 @@ function App() {
       ? <PredictionEditor key={entry.id + m[1]} entry={entry} token={token} locked={locked || m[1]==='view'} onSaved={onSaved} results={state.results} />
       : <div className="card">Bracket not found. <a href="#">Back home</a></div>;
   } else if (hash === '#/leaderboard') page = <Leaderboard state={state} />;
+  else if (hash === '#/game') page = <PenaltyGame />;
   else if (hash === '#/admin') page = <Admin state={state} reload={reload} />;
   else page = <Home state={state} reload={reload} />;
 
@@ -975,6 +1243,7 @@ function App() {
         <nav className="nav">
           <a href="#" className={!hash || hash==='#' ? 'on':''}>Brackets</a>
           <a href="#/leaderboard" className={hash==='#/leaderboard'?'on':''}>Leaderboard</a>
+          <a href="#/game" className={hash==='#/game'?'on':''}>⚽ Game</a>
           <a href="#/admin" className={hash==='#/admin'?'on':''}>Admin</a>
           {IS_DEMO && <span className="pill demo">Demo mode</span>}
         </nav>
