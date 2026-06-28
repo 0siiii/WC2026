@@ -700,13 +700,24 @@ function Bracket({ pred, onPick, readOnly, actual, thirdMap }) {
 /* ============================================================
    PAGES
    ============================================================ */
-function PredictionEditor({ entry, token, locked, onSaved, results, thirdMap }) {
-  const [pred, setPred] = useState(entry.predictions || {});
-  const [tab, setTab] = useState('groups');
+function PredictionEditor({ entry, token, locked, onSaved, results, thirdMap, koPhase }) {
+  // In knockout phase, the bracket is built from the REAL group results, not the
+  // player's group predictions. We graft the real groups/thirds onto their saved
+  // ko picks so the bracket renders the actual matchups. Their original group
+  // predictions remain stored untouched and still score via the leaderboard.
+  const realGroupsReady = koPhase && GROUPS.every(g => (results?.groups?.[g]||[]).length >= 3) && (results?.thirds||[]).length === 8;
+  const buildInitial = () => {
+    const base = entry.predictions || {};
+    if (realGroupsReady) return { ...base, groups: results.groups, thirds: results.thirds };
+    return base;
+  };
+  const [pred, setPred] = useState(buildInitial);
+  const [tab, setTab] = useState(koPhase ? 'ko' : 'groups');
   const [toast, setToast] = useState('');
   const [submitted, setSubmitted] = useState(!!(entry.predictions?._submitted));
   const saveTimer = useRef(null);
   const readOnly = locked || !token;
+  const lockGroups = koPhase; // steps 1 & 2 are frozen in knockout phase
 
   const groupsDone = GROUPS.every(g => (pred.groups?.[g]||[]).length === 4);
   const thirdsDone = (pred.thirds||[]).length === 8;
@@ -717,7 +728,12 @@ function PredictionEditor({ entry, token, locked, onSaved, results, thirdMap }) 
     if (readOnly) return;
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
-      try { await api.saveEntry(entry.id, token, next); setToast('Saved'); onSaved(entry.id, next); }
+      // In knockout phase, persist ONLY the ko picks (+ submit flag); keep the
+      // player's original group predictions in their stored row.
+      const toSave = koPhase
+        ? { ...(entry.predictions||{}), ko: next.ko, _submitted: next._submitted }
+        : next;
+      try { await api.saveEntry(entry.id, token, toSave); setToast('Saved'); onSaved(entry.id, toSave); }
       catch (e) { setToast('Save failed: ' + e.message); }
       setTimeout(()=>setToast(''), 1800);
     }, 600);
@@ -749,11 +765,12 @@ function PredictionEditor({ entry, token, locked, onSaved, results, thirdMap }) 
         {readOnly && <span className="pill lock">{locked ? 'Locked' : 'View only'}</span>}
       </div>
       <div className="steps">
-        <button className={'step' + (tab==='groups'?' on':'') + (groupsDone?' ok':'')} onClick={()=>setTab('groups')}>1 · Groups</button>
-        <button className={'step' + (tab==='thirds'?' on':'') + (thirdsDone?' ok':'')} onClick={()=>setTab('thirds')} disabled={!groupsDone}>2 · Best thirds</button>
-        <button className={'step' + (tab==='ko'?' on':'') + (champDone?' ok':'')} onClick={()=>setTab('ko')} disabled={!groupsDone || !thirdsDone}>3 · Knockout</button>
-        {!readOnly && <button className={'step' + (tab==='submit'?' on':'') + (submitted?' ok':'')} onClick={()=>setTab('submit')} disabled={!champDone}>4 · Submit</button>}
+        <button className={'step' + (tab==='groups'?' on':'') + (groupsDone?' ok':'')} onClick={()=>setTab('groups')} disabled={lockGroups}>1 · Groups{lockGroups?' 🔒':''}</button>
+        <button className={'step' + (tab==='thirds'?' on':'') + (thirdsDone?' ok':'')} onClick={()=>setTab('thirds')} disabled={lockGroups || !groupsDone}>2 · Best thirds{lockGroups?' 🔒':''}</button>
+        <button className={'step' + (tab==='ko'?' on':'') + (champDone?' ok':'')} onClick={()=>setTab('ko')} disabled={!groupsDone || !thirdsDone}>{lockGroups?'1':'3'} · Knockout</button>
+        {!readOnly && <button className={'step' + (tab==='submit'?' on':'') + (submitted?' ok':'')} onClick={()=>setTab('submit')} disabled={!champDone}>{lockGroups?'2':'4'} · Submit</button>}
       </div>
+      {koPhase && <p className="muted" style={{margin:'0 0 12px', padding:'10px 12px', background:'rgba(232,184,75,0.1)', border:'1px solid rgba(232,184,75,0.3)', borderRadius:8}}>🏆 <b style={{color:'var(--chalk)'}}>Knockout phase.</b> Group results are final and locked. Pick your way through the real Round of 32 bracket below — these points are added on top of the group-stage points you already earned. A fresh shot at the leaderboard.</p>}
 
       {tab === 'groups' && (
         <div>
@@ -774,7 +791,7 @@ function PredictionEditor({ entry, token, locked, onSaved, results, thirdMap }) 
       )}
       {tab === 'ko' && (
         <div>
-          <p className="muted">Tap a team in each match to send it through. The next round fills in automatically, all the way to the final. Third-place slots follow FIFA's official allocation rules.</p>
+          <p className="muted">{koPhase ? 'This is the REAL Round of 32. Tap a team in each match to send it through; the next round fills in automatically up to the final.' : 'Tap a team in each match to send it through. The next round fills in automatically, all the way to the final. Third-place slots follow FIFA\'s official allocation rules.'}</p>
           <Bracket pred={pred} onPick={setKo} readOnly={readOnly} actual={results?.ko ? results : null} thirdMap={thirdMap} />
           {champDone && !readOnly && <p style={{marginTop:16}}><button className="btn" onClick={()=>setTab('submit')}>Review & submit →</button></p>}
         </div>
@@ -988,6 +1005,8 @@ function Admin({ state, reload }) {
   );
 
   const locked = state.settings.locked;
+  const koPhase = !!res.koPhase;
+  const realGroupsReady = GROUPS.every(g => (res?.groups?.[g]||[]).length >= 3) && (res?.thirds||[]).length === 8 && Object.keys(res?.thirdMap||{}).length === 8;
   return (
     <div>
       <div className="card" style={{display:'flex', gap:12, alignItems:'center', flexWrap:'wrap'}}>
@@ -996,6 +1015,19 @@ function Admin({ state, reload }) {
           {locked ? 'Unlock predictions' : 'Lock predictions now'}
         </button>
         <span className="muted">Auto-lock at deadline either way.</span>
+      </div>
+
+      <div className="card" style={{borderColor: koPhase ? 'rgba(232,184,75,0.5)' : undefined}}>
+        <div className="eyebrow">Knockout phase mode</div>
+        <p className="muted">When ON, players can no longer touch the group stage or best thirds. Their group-stage points are final, and they re-pick the knockout bracket from the REAL Round of 32 — a second-chance round that adds on top. Turn this on once the group results, the 8 qualified thirds, and the 8 third-place slots above are all entered, then unlock predictions and tell players to redo their knockout picks before the first R32 kickoff.</p>
+        <div style={{display:'flex', gap:12, alignItems:'center', flexWrap:'wrap'}}>
+          <span className={'pill ' + (koPhase ? 'open' : 'lock')}>{koPhase ? 'Knockout phase ON' : 'Knockout phase OFF'}</span>
+          <button className="btn ghost" disabled={!koPhase && !realGroupsReady}
+            onClick={async ()=>{ await api.saveResults(pin, { ...res, koPhase: !koPhase }); setRes({ ...res, koPhase: !koPhase }); reload(); }}>
+            {koPhase ? 'Turn OFF knockout phase' : 'Turn ON knockout phase'}
+          </button>
+          {!koPhase && !realGroupsReady && <span className="muted" style={{color:'var(--signal)'}}>Finish groups, thirds, and all 8 third-place slots first.</span>}
+        </div>
       </div>
 
       <div className="card">
@@ -1515,6 +1547,7 @@ function App() {
 
   const locked = state.settings.locked || new Date() > new Date(state.settings.deadline);
   const thirdMap = deriveThirdMap(state.results);
+  const koPhase = !!state.results?.koPhase;
   const onSaved = (id, predictions) => {
     setState(s => ({ ...s, entries: s.entries.map(e => e.id === id ? { ...e, predictions } : e) }));
   };
@@ -1525,7 +1558,7 @@ function App() {
     const entry = state.entries.find(e => e.id === m[2]);
     const token = m[1] === 'edit' ? myTokens.get()[m[2]] : null;
     page = entry
-      ? <PredictionEditor key={entry.id + m[1]} entry={entry} token={token} locked={locked || m[1]==='view'} onSaved={onSaved} results={state.results} thirdMap={thirdMap} />
+      ? <PredictionEditor key={entry.id + m[1]} entry={entry} token={token} locked={locked || m[1]==='view'} onSaved={onSaved} results={state.results} thirdMap={thirdMap} koPhase={koPhase} />
       : <div className="card">Bracket not found. <a href="#">Back home</a></div>;
   } else if (hash === '#/leaderboard') page = <Leaderboard state={state} />;
   else if (hash === '#/game') page = <PenaltyGame />;
