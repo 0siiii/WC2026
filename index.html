@@ -411,7 +411,9 @@ function score(pred, res, modelKey, thirdMap) {
   if (!res || !res.groups) return { ...out, total:0 };
   const rg = res.groups || {}, pg = pred.groups || {};
 
+  const koOnly = !!pred._koOnly;
   for (const g of GROUPS) {
+    if (koOnly) break;           // koPhase-created brackets earn NO group points
     if (modelKey === 'A') break; // model A scores groups purely via R32 progression below
     const r = rg[g] || [], p = pg[g] || [];
     if (r.length < 3 || p.length < 3) continue;
@@ -445,7 +447,7 @@ function score(pred, res, modelKey, thirdMap) {
     out.ko += hits(P.fin, R.fin) * M.ko.fin;
     if (R.champion && P.champion === R.champion) { out.ko += M.ko.champ; out.hitChamp = true; }
     if (R.third && P.third === R.third) out.ko += M.ko.third;
-    if (modelKey === 'A') out.grp += hits(P.r32, R.r32) * 1;
+    if (modelKey === 'A' && !koOnly) out.grp += hits(P.r32, R.r32) * 1;
   }
   out.total = out.grp + out.ko;
   return out;
@@ -522,6 +524,16 @@ const api = {
   async deleteEntry(pin, id) {
     if (IS_DEMO) { demo.write('entries', demo.read('entries',[]).filter(x=>x.id!==id)); return; }
     const { error } = await sb.rpc('admin_delete_entry', { p_pin:pin, p_id:id });
+    if (error) throw error;
+  },
+  async adminSaveEntry(pin, id, predictions) {
+    if (IS_DEMO) {
+      const list = demo.read('entries', []);
+      const e = list.find(x=>x.id===id);
+      if (e) { e.predictions = predictions; e.updated_at = new Date().toISOString(); demo.write('entries', list); }
+      return;
+    }
+    const { error } = await sb.rpc('admin_save_entry', { p_pin:pin, p_id:id, p_predictions:predictions });
     if (error) throw error;
   },
   async loadGameScores() {
@@ -700,7 +712,7 @@ function Bracket({ pred, onPick, readOnly, actual, thirdMap }) {
 /* ============================================================
    PAGES
    ============================================================ */
-function PredictionEditor({ entry, token, locked, onSaved, results, thirdMap, koPhase }) {
+function PredictionEditor({ entry, token, locked, onSaved, results, thirdMap, koPhase, adminPin }) {
   // In knockout phase, the bracket is built from the REAL group results, not the
   // player's group predictions. We graft the real groups/thirds onto their saved
   // ko picks so the bracket renders the actual matchups. Their original group
@@ -716,25 +728,44 @@ function PredictionEditor({ entry, token, locked, onSaved, results, thirdMap, ko
   const [toast, setToast] = useState('');
   const [submitted, setSubmitted] = useState(!!(entry.predictions?._submitted));
   const saveTimer = useRef(null);
-  const readOnly = locked || !token;
-  const lockGroups = koPhase; // steps 1 & 2 are frozen in knockout phase
+  const readOnly = adminPin ? false : (locked || !token);
+  const lockGroups = koPhase && !adminPin; // admin may fix groups too if needed // steps 1 & 2 are frozen in knockout phase
 
   const groupsDone = GROUPS.every(g => (pred.groups?.[g]||[]).length === 4);
   const thirdsDone = (pred.thirds||[]).length === 8;
   const champDone = !!(pred.ko||{})[104];
+
+  // Did this bracket genuinely predict the group stage BEFORE knockout phase?
+  // We judge by the ORIGINAL stored predictions, never by the grafted render state.
+  const origPred = entry.predictions || {};
+  const hadOwnGroups = GROUPS.filter(g => (origPred.groups?.[g]||[]).length === 4).length >= 6
+                       && !origPred._koOnly;
 
   const update = next => {
     setPred(next);
     if (readOnly) return;
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
-      // In knockout phase, persist ONLY the ko picks (+ submit flag); keep the
-      // player's original group predictions in their stored row.
-      const toSave = koPhase
-        ? { ...(entry.predictions||{}), ko: next.ko, _submitted: next._submitted }
-        : next;
-      try { await api.saveEntry(entry.id, token, toSave); setToast('Saved'); onSaved(entry.id, toSave); }
-      catch (e) { setToast('Save failed: ' + e.message); }
+      let toSave;
+      if (koPhase) {
+        if (hadOwnGroups) {
+          // Existing player: keep their ORIGINAL group predictions, update ko only.
+          toSave = { ...origPred, ko: next.ko, _submitted: next._submitted };
+        } else {
+          // Bracket created/empty in knockout phase: it has NO legitimate group
+          // predictions. Store ko only and stamp _koOnly so scoring gives it ZERO
+          // group points. This prevents the grafted real groups from ever leaking
+          // a free perfect group score.
+          toSave = { ko: next.ko, _submitted: next._submitted, _koOnly: true };
+        }
+      } else {
+        toSave = next;
+      }
+      try {
+        if (adminPin) await api.adminSaveEntry(adminPin, entry.id, toSave);
+        else await api.saveEntry(entry.id, token, toSave);
+        setToast(adminPin ? 'Saved (admin)' : 'Saved'); onSaved(entry.id, toSave);
+      } catch (e) { setToast('Save failed: ' + e.message); }
       setTimeout(()=>setToast(''), 1800);
     }, 600);
   };
@@ -1091,9 +1122,11 @@ function Admin({ state, reload }) {
 
       <div className="card">
         <div className="eyebrow">Manage brackets</div>
+        <p className="muted">As admin you can open and edit anyone's bracket directly — useful when a player loses access to their own. Your changes save immediately, bypassing the lock.</p>
         {state.entries.map(e => (
-          <div key={e.id} style={{display:'flex', gap:10, alignItems:'center', padding:'6px 0', borderBottom:'1px dashed var(--chalk-faint)'}}>
+          <div key={e.id} style={{display:'flex', gap:8, alignItems:'center', padding:'6px 0', borderBottom:'1px dashed var(--chalk-faint)'}}>
             <span style={{flex:1}}>{e.name}</span>
+            <a className="btn ghost" style={{padding:'5px 12px', fontSize:12}} href={'#/admin-edit/'+e.id}>Edit</a>
             <a className="btn ghost" style={{padding:'5px 12px', fontSize:12}} href={'#/view/'+e.id}>View</a>
             <button className="btn danger" style={{padding:'5px 12px', fontSize:12}} onClick={async ()=>{ if(confirm('Delete '+e.name+'?')) { await api.deleteEntry(pin, e.id); reload(); } }}>Delete</button>
           </div>
@@ -1554,7 +1587,16 @@ function App() {
 
   let page;
   const m = hash.match(/^#\/(edit|view)\/(.+)$/);
-  if (m) {
+  const am = hash.match(/^#\/admin-edit\/(.+)$/);
+  if (am) {
+    const entry = state.entries.find(e => e.id === am[1]);
+    const adminPin = sessionStorage.getItem('wc26_pin') || '';
+    page = !adminPin
+      ? <div className="card">Admin session expired. <a href="#/admin">Re-enter your PIN</a> first, then come back.</div>
+      : entry
+        ? <PredictionEditor key={entry.id + 'admin'} entry={entry} token={null} adminPin={adminPin} locked={false} onSaved={onSaved} results={state.results} thirdMap={thirdMap} koPhase={koPhase} />
+        : <div className="card">Bracket not found. <a href="#/admin">Back to admin</a></div>;
+  } else if (m) {
     const entry = state.entries.find(e => e.id === m[2]);
     const token = m[1] === 'edit' ? myTokens.get()[m[2]] : null;
     page = entry
