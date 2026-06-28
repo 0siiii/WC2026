@@ -328,13 +328,27 @@ function assignThirds(letters) {
   return solve(THIRD_SLOTS, [...letters]) ? out : null;
 }
 
-/* Resolve teams of every knockout match from a prediction object
-   pred = { groups:{A:[id,id,id,id],...}, thirds:[letters], ko:{"73":id,...} } */
-function bracketTeams(pred) {
-  const teams = {}; // matchNo -> [homeId|null, awayId|null]
+/* The admin can store the real FIFA third-place allocation in
+   results.thirdMap = { "74":"D", "77":"F", ... }. If absent, fall back to the
+   solver applied to the real qualified thirds so older data still renders. */
+function deriveThirdMap(results) {
+  if (results && results.thirdMap && Object.keys(results.thirdMap).length === 8) return results.thirdMap;
+  if (results && (results.thirds||[]).length === 8 && GROUPS.every(g => (results.groups?.[g]||[]).length >= 3))
+    return assignThirds(results.thirds);
+  return null;
+}
+
+/* Resolve teams of every knockout match from a prediction object.
+   thirdMap (optional): { "74":"D", ... } forces which GROUP's third fills each
+   third-place slot. When the admin enters the real FIFA allocation, this
+   overrides the solver so every bracket matches reality exactly. */
+function bracketTeams(pred, thirdMap) {
+  const teams = {};
   const g = pred.groups || {}, thirds = pred.thirds || [], ko = pred.ko || {};
   const complete = GROUPS.every(x => (g[x]||[]).length === 4);
-  const tmap = (complete && thirds.length === 8) ? assignThirds(thirds) : null;
+  const useOverride = thirdMap && Object.keys(thirdMap).length === 8;
+  const tmap = useOverride ? thirdMap
+    : ((complete && thirds.length === 8) ? assignThirds(thirds) : null);
   for (const def of R32) {
     const get = side => {
       if (side.W) return (g[side.W]||[])[0] || null;
@@ -358,8 +372,8 @@ function bracketTeams(pred) {
 }
 
 /* Which teams does a prediction send to each stage? Used for scoring. */
-function progression(pred) {
-  const t = bracketTeams(pred), ko = pred.ko || {};
+function progression(pred, thirdMap) {
+  const t = bracketTeams(pred, thirdMap), ko = pred.ko || {};
   const setOf = ms => new Set(ms.map(m=>ko[m]).filter(Boolean));
   const r32 = new Set();
   GROUPS.forEach(g => {
@@ -392,7 +406,7 @@ const MODELS = {
   C: { name:'Hybrid', grp:{p1:3,p2:2,p3:1}, koSlot:{r32:2,r16:3,qf:5,sf:7,f:10,tp:4}, bonusFinalists:5, slot:true },
 };
 
-function score(pred, res, modelKey) {
+function score(pred, res, modelKey, thirdMap) {
   const M = MODELS[modelKey], out = { grp:0, ko:0, hitChamp:false, exactWinners:0 };
   if (!res || !res.groups) return { ...out, total:0 };
   const rg = res.groups || {}, pg = pred.groups || {};
@@ -423,7 +437,7 @@ function score(pred, res, modelKey) {
     if (rfin.size === 2 && pfin.size === 2 && [...rfin].every(t=>pfin.has(t))) out.ko += M.bonusFinalists;
     out.hitChamp = !!rko[104] && pko[104] === rko[104];
   } else {
-    const P = progression(pred), R = progression(res);
+    const P = progression(pred, thirdMap), R = progression(res, thirdMap);
     const hits = (a,b) => [...b].filter(t=>a.has(t)).length;
     out.ko += hits(P.r16, R.r16) * M.ko.r16;
     out.ko += hits(P.qf,  R.qf)  * M.ko.qf;
@@ -614,10 +628,10 @@ function ThirdsPicker({ pred, onChange, readOnly }) {
 
 /* Knockout bracket. Tap a team to send it through; downstream picks
    of a replaced team are cleared automatically. */
-function Bracket({ pred, onPick, readOnly, actual }) {
-  const teams = useMemo(() => bracketTeams(pred), [pred]);
+function Bracket({ pred, onPick, readOnly, actual, thirdMap }) {
+  const teams = useMemo(() => bracketTeams(pred, thirdMap), [pred, thirdMap]);
   const ko = pred.ko || {};
-  const actualTeams = useMemo(() => actual ? bracketTeams(actual) : null, [actual]);
+  const actualTeams = useMemo(() => actual ? bracketTeams(actual, thirdMap) : null, [actual, thirdMap]);
 
   const pick = (m, id) => {
     if (readOnly || !id) return;
@@ -686,7 +700,7 @@ function Bracket({ pred, onPick, readOnly, actual }) {
 /* ============================================================
    PAGES
    ============================================================ */
-function PredictionEditor({ entry, token, locked, onSaved, results }) {
+function PredictionEditor({ entry, token, locked, onSaved, results, thirdMap }) {
   const [pred, setPred] = useState(entry.predictions || {});
   const [tab, setTab] = useState('groups');
   const [toast, setToast] = useState('');
@@ -719,7 +733,7 @@ function PredictionEditor({ entry, token, locked, onSaved, results }) {
   const setKo = ko => update({ ...pred, ko });
 
   function pruneKo(p, groups, thirds) {
-    const probe = bracketTeams({ groups, thirds, ko: p.ko||{} });
+    const probe = bracketTeams({ groups, thirds, ko: p.ko||{} }, thirdMap);
     const ko = { ...(p.ko||{}) };
     for (const m of ALL_KO) {
       const [h,a] = probe[m]||[null,null];
@@ -761,7 +775,7 @@ function PredictionEditor({ entry, token, locked, onSaved, results }) {
       {tab === 'ko' && (
         <div>
           <p className="muted">Tap a team in each match to send it through. The next round fills in automatically, all the way to the final. Third-place slots follow FIFA's official allocation rules.</p>
-          <Bracket pred={pred} onPick={setKo} readOnly={readOnly} actual={results?.ko ? results : null} />
+          <Bracket pred={pred} onPick={setKo} readOnly={readOnly} actual={results?.ko ? results : null} thirdMap={thirdMap} />
           {champDone && !readOnly && <p style={{marginTop:16}}><button className="btn" onClick={()=>setTab('submit')}>Review & submit →</button></p>}
         </div>
       )}
@@ -898,7 +912,7 @@ function Home({ state, reload }) {
 function Leaderboard({ state }) {
   const tokens = myTokens.get();
   const rows = state.entries.map(e => {
-    const s = score(e.predictions||{}, state.results, ACTIVE_MODEL);
+    const s = score(e.predictions||{}, state.results, ACTIVE_MODEL, state.results?.thirdMap);
     return { ...e, s };
   }).sort((a,b) =>
     b.s.total - a.s.total ||
@@ -940,6 +954,16 @@ function Admin({ state, reload }) {
 
   useEffect(() => { setRes(state.results || {}); }, [state.results]);
   useEffect(() => { if (pin && !authed) login(); }, []);
+
+  const adminThirdMap = deriveThirdMap(res);
+  const setSlot = (m, grp) => {
+    const tm = { ...(res.thirdMap || {}) };
+    if (grp) tm[m] = grp; else delete tm[m];
+    save({ ...res, thirdMap: tm });
+  };
+  // groups that finished 3rd and were marked as qualified thirds
+  const qualifiedThirdGroups = (res.thirds || []).filter(g => (res.groups?.[g]||[]).length >= 3);
+  const slotDefs = R32.filter(x => x.a.T).map(x => ({ m: x.m, allowed: x.a.T, home: x.h.W }));
 
   const login = async () => {
     try {
@@ -990,9 +1014,47 @@ function Admin({ state, reload }) {
       </div>
 
       <div className="card">
+        <div className="eyebrow">Real results · Round of 32 third-place slots</div>
+        <p className="muted">FIFA assigns the 8 qualified third-placed teams to specific Round of 32 slots using its official Annex C table. Set each slot below to match the REAL bracket (e.g. FIFA put Group D's third, Paraguay, against Germany). This overrides the automatic guess and fixes everyone's bracket and scoring at once. Each group's third can be used only once.</p>
+        {qualifiedThirdGroups.length < 8
+          ? <p className="muted" style={{color:'var(--signal)'}}>Enter all 12 final group standings and select the 8 qualified thirds above first. ({qualifiedThirdGroups.length}/8 selected)</p>
+          : <div className="thirds-grid">
+              {slotDefs.map(slot => {
+                const used = res.thirdMap || {};
+                const current = used[slot.m] || '';
+                const homeId = (res.groups?.[slot.home]||[])[0];
+                const options = slot.allowed.filter(g =>
+                  qualifiedThirdGroups.includes(g) && (used[slot.m] === g || !Object.entries(used).some(([mm,gg]) => gg === g && Number(mm) !== slot.m))
+                );
+                return (
+                  <div key={slot.m} style={{background:'rgba(0,0,0,0.2)', borderRadius:8, padding:'8px 10px'}}>
+                    <div style={{fontFamily:'Oswald', fontSize:11, letterSpacing:'0.1em', color:'var(--gold)', marginBottom:6, display:'flex', alignItems:'center', gap:6}}>
+                      {homeId && <img src={flagUrl(homeId)} style={{width:20,height:13,borderRadius:2}} alt=""/>}
+                      M{slot.m}: {homeId ? TEAMS[homeId].n : 'Winner '+slot.home} vs 3rd of…
+                    </div>
+                    <select value={current} onChange={e=>setSlot(slot.m, e.target.value)}
+                      style={{width:'100%', padding:'8px', borderRadius:6, background:'rgba(0,0,0,0.3)', color:'var(--chalk)', border:'1px solid var(--chalk-faint)', fontSize:14}}>
+                      <option value="">— pick group —</option>
+                      {slot.allowed.filter(g=>qualifiedThirdGroups.includes(g)).map(g => {
+                        const tid = (res.groups?.[g]||[])[2];
+                        const taken = Object.entries(used).some(([mm,gg]) => gg === g && Number(mm) !== slot.m);
+                        return <option key={g} value={g} disabled={taken}>{g}: {tid ? TEAMS[tid].n : '3rd of '+g}{taken ? ' (used)' : ''}</option>;
+                      })}
+                    </select>
+                  </div>
+                );
+              })}
+            </div>}
+        <p className="muted" style={{marginTop:10}}>
+          Slots set: <b style={{color: Object.keys(res.thirdMap||{}).length===8 ? 'var(--ok)' : 'var(--chalk)'}}>{Object.keys(res.thirdMap||{}).length}/8</b>
+          {Object.keys(res.thirdMap||{}).length===8 && ' ✓ bracket now matches the real draw'}
+        </p>
+      </div>
+
+      <div className="card">
         <div className="eyebrow">Real results · knockout</div>
         <p className="muted">Tap the actual winner of each match as it's played.</p>
-        <Bracket pred={res} onPick={ko=>save({ ...res, ko })} />
+        <Bracket pred={res} onPick={ko=>save({ ...res, ko })} thirdMap={adminThirdMap} />
       </div>
 
       <div className="card">
@@ -1452,6 +1514,7 @@ function App() {
   if (!state) return <div className="wrap"><p className="muted" style={{padding:40, textAlign:'center'}}>Warming up…</p></div>;
 
   const locked = state.settings.locked || new Date() > new Date(state.settings.deadline);
+  const thirdMap = deriveThirdMap(state.results);
   const onSaved = (id, predictions) => {
     setState(s => ({ ...s, entries: s.entries.map(e => e.id === id ? { ...e, predictions } : e) }));
   };
@@ -1462,7 +1525,7 @@ function App() {
     const entry = state.entries.find(e => e.id === m[2]);
     const token = m[1] === 'edit' ? myTokens.get()[m[2]] : null;
     page = entry
-      ? <PredictionEditor key={entry.id + m[1]} entry={entry} token={token} locked={locked || m[1]==='view'} onSaved={onSaved} results={state.results} />
+      ? <PredictionEditor key={entry.id + m[1]} entry={entry} token={token} locked={locked || m[1]==='view'} onSaved={onSaved} results={state.results} thirdMap={thirdMap} />
       : <div className="card">Bracket not found. <a href="#">Back home</a></div>;
   } else if (hash === '#/leaderboard') page = <Leaderboard state={state} />;
   else if (hash === '#/game') page = <PenaltyGame />;
